@@ -1,0 +1,17 @@
+//@version=5
+strategy("EMA Crossover", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// Inputs
+fastLength = input.int(9, "Fast EMA Length")
+slowLength = input.int(21, "Slow EMA Length")
+
+// Indicators
+fastEma = ta.ema(close, fastLength)
+slowEma = ta.ema(close, slowLength)
+
+// Strategy Logic
+if ta.crossover(fastEma, slowEma)
+    strategy.entry("EMA Long", strategy.long)
+
+if ta.crossunder(fastEma, slowEma)
+    strategy.close("EMA Long")

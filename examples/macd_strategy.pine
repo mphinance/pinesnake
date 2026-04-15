@@ -1,0 +1,17 @@
+//@version=5
+strategy("MACD Signal Cross", overlay=false, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// Inputs
+fastLength = input.int(12, "MACD Fast Length")
+slowLength = input.int(26, "MACD Slow Length")
+signalLength = input.int(9, "Signal Length")
+
+// Indicator
+[macdLine, signalLine, histLine] = ta.macd(close, fastLength, slowLength, signalLength)
+
+// Strategy Logic
+if ta.crossover(macdLine, signalLine)
+    strategy.entry("MACD Long", strategy.long)
+
+if ta.crossunder(macdLine, signalLine)
+    strategy.close("MACD Long")

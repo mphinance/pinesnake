@@ -1,0 +1,17 @@
+//@version=5
+strategy("RSI Overbought/Oversold", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// Inputs
+length = input.int(14, "RSI Length")
+overbought = input.int(70, "Overbought Level")
+oversold = input.int(30, "Oversold Level")
+
+// Indicator
+rsiValue = ta.rsi(close, length)
+
+// Strategy Logic
+if ta.crossover(rsiValue, oversold)
+    strategy.entry("RSI Long", strategy.long)
+
+if ta.crossunder(rsiValue, overbought)
+    strategy.close("RSI Long")
