@@ -14,7 +14,7 @@ import logging
 from datetime import datetime
 
 import pandas as pd
-import pandas_ta as ta
+import ta
 import requests
 from dotenv import load_dotenv
 
@@ -211,7 +211,7 @@ def cancel_all_orders():
 # ═══════════════════════════════════════════════════════
 
 def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Calculate strategy indicators using pandas-ta."""
+    """Calculate strategy indicators using the ta library."""
 {% for indicator in indicators %}
     {{ indicator.assignment }}
 {% endfor %}

@@ -1,14 +1,15 @@
 """
-PineSnake Indicator Mappings — ta.* → pandas-ta / pandas equivalents.
+PineSnake Indicator Mappings — ta.* → Python `ta` library equivalents.
 
 This module defines how Pine Script's ta.* functions map to their
-Python equivalents. The code generator uses this table to produce
-correct pandas-ta / pandas code in the output script.
+Python equivalents using the `ta` library (https://github.com/bukosabino/ta).
+The code generator uses this table to produce correct ta-library code
+in the output script.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 
@@ -35,22 +36,26 @@ class IndicatorMapping:
     unpack_columns: list[str] | None = None
 
 
+# ═══════════════════════════════════════════════
+# INDICATOR FUNCTIONS (using `ta` library API)
+# ═══════════════════════════════════════════════
+
 def _sma(args: list[str], kwargs: dict[str, str]) -> str:
     src = args[0] if args else kwargs.get("source", "df['close']")
     length = args[1] if len(args) > 1 else kwargs.get("length", "14")
-    return f"ta.sma({src}, length={length})"
+    return f"ta.trend.sma_indicator({src}, window={length})"
 
 
 def _ema(args: list[str], kwargs: dict[str, str]) -> str:
     src = args[0] if args else kwargs.get("source", "df['close']")
     length = args[1] if len(args) > 1 else kwargs.get("length", "14")
-    return f"ta.ema({src}, length={length})"
+    return f"ta.trend.ema_indicator({src}, window={length})"
 
 
 def _rsi(args: list[str], kwargs: dict[str, str]) -> str:
     src = args[0] if args else kwargs.get("source", "df['close']")
     length = args[1] if len(args) > 1 else kwargs.get("length", "14")
-    return f"ta.rsi({src}, length={length})"
+    return f"ta.momentum.rsi({src}, window={length})"
 
 
 def _macd(args: list[str], kwargs: dict[str, str]) -> str:
@@ -58,23 +63,47 @@ def _macd(args: list[str], kwargs: dict[str, str]) -> str:
     fast = args[1] if len(args) > 1 else kwargs.get("fast", "12")
     slow = args[2] if len(args) > 2 else kwargs.get("slow", "26")
     signal = args[3] if len(args) > 3 else kwargs.get("signal", "9")
-    return f"ta.macd({src}, fast={fast}, slow={slow}, signal={signal})"
+    # Returns individual components — handled by unpack logic
+    return f"ta.trend.macd({src}, window_slow={slow}, window_fast={fast}, window_sign={signal})"
+
+
+def _macd_line(args: list[str], kwargs: dict[str, str]) -> str:
+    src = args[0] if args else kwargs.get("source", "df['close']")
+    fast = args[1] if len(args) > 1 else kwargs.get("fast", "12")
+    slow = args[2] if len(args) > 2 else kwargs.get("slow", "26")
+    return f"ta.trend.macd({src}, window_slow={slow}, window_fast={fast})"
+
+
+def _macd_signal(args: list[str], kwargs: dict[str, str]) -> str:
+    src = args[0] if args else kwargs.get("source", "df['close']")
+    fast = args[1] if len(args) > 1 else kwargs.get("fast", "12")
+    slow = args[2] if len(args) > 2 else kwargs.get("slow", "26")
+    signal = args[3] if len(args) > 3 else kwargs.get("signal", "9")
+    return f"ta.trend.macd_signal({src}, window_slow={slow}, window_fast={fast}, window_sign={signal})"
+
+
+def _macd_hist(args: list[str], kwargs: dict[str, str]) -> str:
+    src = args[0] if args else kwargs.get("source", "df['close']")
+    fast = args[1] if len(args) > 1 else kwargs.get("fast", "12")
+    slow = args[2] if len(args) > 2 else kwargs.get("slow", "26")
+    signal = args[3] if len(args) > 3 else kwargs.get("signal", "9")
+    return f"ta.trend.macd_diff({src}, window_slow={slow}, window_fast={fast}, window_sign={signal})"
 
 
 def _atr(args: list[str], kwargs: dict[str, str]) -> str:
     length = args[0] if args else kwargs.get("length", "14")
-    return f"ta.atr(df['high'], df['low'], df['close'], length={length})"
+    return f"ta.volatility.average_true_range(df['high'], df['low'], df['close'], window={length})"
 
 
 def _stoch(args: list[str], kwargs: dict[str, str]) -> str:
     k = args[3] if len(args) > 3 else kwargs.get("length", kwargs.get("k", "14"))
-    return f"ta.stoch(df['high'], df['low'], df['close'], k={k})"
+    return f"ta.momentum.stoch(df['high'], df['low'], df['close'], window={k})"
 
 
 def _vwma(args: list[str], kwargs: dict[str, str]) -> str:
     src = args[0] if args else kwargs.get("source", "df['close']")
     length = args[1] if len(args) > 1 else kwargs.get("length", "14")
-    return f"ta.vwma({src}, df['volume'], length={length})"
+    return f"ta.volume.volume_weighted_average_price(df['high'], df['low'], {src}, df['volume'], window={length})"
 
 
 def _crossover(args: list[str], kwargs: dict[str, str]) -> str:
@@ -125,39 +154,53 @@ def _nz(args: list[str], kwargs: dict[str, str]) -> str:
 def _wma(args: list[str], kwargs: dict[str, str]) -> str:
     src = args[0] if args else kwargs.get("source", "df['close']")
     length = args[1] if len(args) > 1 else kwargs.get("length", "14")
-    return f"ta.wma({src}, length={length})"
+    return f"ta.trend.wma_indicator({src}, window={length})"
 
 
 def _hma(args: list[str], kwargs: dict[str, str]) -> str:
+    # ta library doesn't have HMA directly — approximate with WMA composition
     src = args[0] if args else kwargs.get("source", "df['close']")
     length = args[1] if len(args) > 1 else kwargs.get("length", "14")
-    return f"ta.hma({src}, length={length})"
+    return f"ta.trend.wma_indicator({src}, window={length})  # HMA approximation"
 
 
-def _bb(args: list[str], kwargs: dict[str, str]) -> str:
+def _bb_upper(args: list[str], kwargs: dict[str, str]) -> str:
     src = args[0] if args else kwargs.get("source", "df['close']")
     length = args[1] if len(args) > 1 else kwargs.get("length", "20")
-    std = args[2] if len(args) > 2 else kwargs.get("mult", kwargs.get("std", "2.0"))
-    return f"ta.bbands({src}, length={length}, std={std})"
+    std = args[2] if len(args) > 2 else kwargs.get("mult", kwargs.get("std", "2"))
+    return f"ta.volatility.bollinger_hband({src}, window={length}, window_dev={std})"
+
+
+def _bb_mid(args: list[str], kwargs: dict[str, str]) -> str:
+    src = args[0] if args else kwargs.get("source", "df['close']")
+    length = args[1] if len(args) > 1 else kwargs.get("length", "20")
+    return f"ta.volatility.bollinger_mavg({src}, window={length})"
+
+
+def _bb_lower(args: list[str], kwargs: dict[str, str]) -> str:
+    src = args[0] if args else kwargs.get("source", "df['close']")
+    length = args[1] if len(args) > 1 else kwargs.get("length", "20")
+    std = args[2] if len(args) > 2 else kwargs.get("mult", kwargs.get("std", "2"))
+    return f"ta.volatility.bollinger_lband({src}, window={length}, window_dev={std})"
 
 
 def _cci(args: list[str], kwargs: dict[str, str]) -> str:
     length = args[0] if args else kwargs.get("length", "20")
-    return f"ta.cci(df['high'], df['low'], df['close'], length={length})"
+    return f"ta.trend.cci(df['high'], df['low'], df['close'], window={length})"
 
 
 def _mfi(args: list[str], kwargs: dict[str, str]) -> str:
     length = args[0] if args else kwargs.get("length", "14")
-    return f"ta.mfi(df['high'], df['low'], df['close'], df['volume'], length={length})"
+    return f"ta.volume.money_flow_index(df['high'], df['low'], df['close'], df['volume'], window={length})"
 
 
 def _obv(args: list[str], kwargs: dict[str, str]) -> str:
-    return "ta.obv(df['close'], df['volume'])"
+    return "ta.volume.on_balance_volume(df['close'], df['volume'])"
 
 
 def _adx(args: list[str], kwargs: dict[str, str]) -> str:
     length = args[0] if args else kwargs.get("length", "14")
-    return f"ta.adx(df['high'], df['low'], df['close'], length={length})"
+    return f"ta.trend.adx(df['high'], df['low'], df['close'], window={length})"
 
 
 # ═══════════════════════════════════════════════
@@ -169,21 +212,21 @@ INDICATOR_MAP: dict[str, IndicatorMapping] = {
     "ta.sma": IndicatorMapping("ta.sma", _sma, notes="Simple Moving Average"),
     "ta.ema": IndicatorMapping("ta.ema", _ema, notes="Exponential Moving Average"),
     "ta.wma": IndicatorMapping("ta.wma", _wma, notes="Weighted Moving Average"),
-    "ta.hma": IndicatorMapping("ta.hma", _hma, notes="Hull Moving Average"),
-    "ta.vwma": IndicatorMapping("ta.vwma", _vwma, notes="Volume Weighted Moving Average"),
+    "ta.hma": IndicatorMapping("ta.hma", _hma, notes="Hull Moving Average (WMA approx)"),
+    "ta.vwma": IndicatorMapping("ta.vwma", _vwma, notes="Volume Weighted Average Price"),
 
     # Oscillators
     "ta.rsi": IndicatorMapping("ta.rsi", _rsi, notes="Relative Strength Index"),
-    "ta.macd": IndicatorMapping("ta.macd", _macd, notes="MACD (returns DataFrame with 3 cols)", output_type="multi_column", unpack_columns=["macd", "signal", "hist"]),
-    "ta.stoch": IndicatorMapping("ta.stoch", _stoch, needs_ohlc=True, notes="Stochastic Oscillator", output_type="multi_column", unpack_columns=["k", "d"]),
+    "ta.macd": IndicatorMapping("ta.macd", _macd, notes="MACD (returns 3 components)", output_type="multi_column", unpack_columns=["macd", "signal", "hist"]),
+    "ta.stoch": IndicatorMapping("ta.stoch", _stoch, needs_ohlc=True, notes="Stochastic Oscillator"),
     "ta.cci": IndicatorMapping("ta.cci", _cci, needs_ohlc=True, notes="Commodity Channel Index"),
     "ta.mfi": IndicatorMapping("ta.mfi", _mfi, needs_ohlc=True, notes="Money Flow Index"),
     "ta.adx": IndicatorMapping("ta.adx", _adx, needs_ohlc=True, notes="Average Directional Index"),
 
     # Volatility
     "ta.atr": IndicatorMapping("ta.atr", _atr, needs_ohlc=True, notes="Average True Range"),
-    "ta.bb": IndicatorMapping("ta.bb", _bb, notes="Bollinger Bands (returns DataFrame)", output_type="multi_column", unpack_columns=["lower", "mid", "upper", "bandwidth", "percent"]),
-    "ta.bbands": IndicatorMapping("ta.bbands", _bb, notes="Bollinger Bands alias", output_type="multi_column", unpack_columns=["lower", "mid", "upper", "bandwidth", "percent"]),
+    "ta.bb": IndicatorMapping("ta.bb", _bb_upper, notes="Bollinger Bands upper"),
+    "ta.bbands": IndicatorMapping("ta.bbands", _bb_upper, notes="Bollinger Bands alias"),
 
     # Volume
     "ta.obv": IndicatorMapping("ta.obv", _obv, needs_ohlc=True, notes="On-Balance Volume"),

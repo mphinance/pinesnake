@@ -22,23 +22,23 @@ class TestIndicatorResolution:
     def test_sma(self):
         result = resolve_indicator("ta.sma", ["df['close']", "14"], {})
         assert result is not None
-        assert "ta.sma" in result
+        assert "sma_indicator" in result
         assert "14" in result
 
     def test_ema(self):
         result = resolve_indicator("ta.ema", ["df['close']", "21"], {})
         assert result is not None
-        assert "ta.ema" in result
+        assert "ema_indicator" in result
 
     def test_rsi(self):
         result = resolve_indicator("ta.rsi", ["df['close']", "14"], {})
         assert result is not None
-        assert "ta.rsi" in result
+        assert "rsi" in result
 
     def test_macd(self):
         result = resolve_indicator("ta.macd", ["df['close']", "12", "26", "9"], {})
         assert result is not None
-        assert "ta.macd" in result
+        assert "macd" in result
 
     def test_atr(self):
         result = resolve_indicator("ta.atr", ["14"], {})
@@ -92,7 +92,7 @@ class TestCodeGeneration:
         code = generate(spec, timeframe="5min", symbol="SPY")
 
         assert len(code) > 100
-        assert "pandas_ta" in code or "ta." in code
+        assert "import ta" in code
         assert "TRADIER" in code
         assert "DRY_RUN" in code
         assert "def main" in code
