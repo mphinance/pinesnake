@@ -10,6 +10,7 @@ from pinesnake.codegen.indicators import (
     resolve_indicator,
     get_supported_functions,
     INDICATOR_MAP,
+    CROSS_FUNCTIONS,
 )
 
 
@@ -45,19 +46,19 @@ class TestIndicatorResolution:
         assert result is not None
         assert "high" in result and "low" in result
 
-    def test_crossover(self):
-        result = resolve_indicator("ta.crossover", ["fast", "slow"], {})
-        assert result is not None
-        assert ">" in result and "shift" in result
+    def test_crossover_not_in_indicator_map(self):
+        """ta.crossover is a condition function, not a series indicator."""
+        assert "ta.crossover" not in INDICATOR_MAP
+        assert "ta.crossover" in CROSS_FUNCTIONS
 
-    def test_crossunder(self):
-        result = resolve_indicator("ta.crossunder", ["fast", "slow"], {})
-        assert result is not None
-        assert "<" in result and "shift" in result
+    def test_crossunder_not_in_indicator_map(self):
+        """ta.crossunder is a condition function, not a series indicator."""
+        assert "ta.crossunder" not in INDICATOR_MAP
+        assert "ta.crossunder" in CROSS_FUNCTIONS
 
     def test_unsupported(self):
-        result = resolve_indicator("ta.nonexistent", [], {})
-        assert result is None
+        with pytest.raises(ValueError, match="Unsupported indicator: ta.nonexistent"):
+            resolve_indicator("ta.nonexistent", [], {})
 
     def test_all_mappings_callable(self):
         """Every mapping should be callable and produce output."""
@@ -106,6 +107,9 @@ class TestCodeGeneration:
         assert "ema" in code.lower()
         assert "def calculate_indicators" in code
         assert "def check_signals" in code
+        # Generated conditions must use df.iloc[] not row vars
+        assert "last[" not in code
+        assert "prev[" not in code
 
     def test_generate_env_file(self):
         """Generate .env config file."""

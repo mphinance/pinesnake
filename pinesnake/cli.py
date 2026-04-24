@@ -90,18 +90,23 @@ def convert(pine_file: Path, tradier: bool, timeframe: str, symbol: str,
 
     # Output
     if output:
-        output.write_text(code, encoding="utf-8")
-        click.echo(f"✅ Written to: {output}", err=True)
+        try:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(code, encoding="utf-8")
+            click.echo(f"✅ Written to: {output}", err=True)
 
-        # Generate .env alongside
-        if env:
-            env_path = output.with_suffix(".env")
-            env_content = gen.generate_env(spec)
-            env_path.write_text(env_content, encoding="utf-8")
-            click.echo(f"✅ Config: {env_path}", err=True)
+            # Generate .env alongside
+            if env:
+                env_path = output.with_suffix(".env")
+                env_content = gen.generate_env(spec)
+                env_path.write_text(env_content, encoding="utf-8")
+                click.echo(f"✅ Config: {env_path}", err=True)
 
-            # Security: ensure .gitignore includes .env
-            _ensure_gitignore(output.parent)
+                # Security: ensure .gitignore includes .env
+                _ensure_gitignore(output.parent)
+        except OSError as e:
+            click.echo(f"❌ IO error while writing output: {e}", err=True)
+            raise SystemExit(1)
     else:
         click.echo(code)
 

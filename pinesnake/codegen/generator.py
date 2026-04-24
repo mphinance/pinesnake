@@ -8,6 +8,7 @@ produces a standalone, runnable Python script targeting the Tradier API.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -140,13 +141,24 @@ class CodeGenerator:
                 logger.warning(f"Unsupported indicator: {ind.pine_func} — skipping")
                 python_code = f"None  # UNSUPPORTED: {ind.pine_func}"
 
-            # Create the assignment line
             var_name = _sanitize_var(ind.result_var)
-
-            # Check if the mapping declares multi-column output
             mapping = INDICATOR_MAP.get(ind.pine_func)
-            if mapping and mapping.output_type == "multi_column" and mapping.unpack_columns:
-                # Generic unpack: _tmp = ta.macd(...); df['var_macd'] = _tmp.iloc[:,0]; ...
+
+            if ind.result_vars:
+                # Tuple-unpack assignment: user declared N vars, e.g. [macdLine, signalLine] = ta.macd(...)
+                # Use the declared var names, capped to available unpack_columns.
+                unpack_cols = (mapping.unpack_columns or []) if mapping else []
+                lines = [f"_tmp_{var_name} = {python_code}"]
+                for i, user_var in enumerate(ind.result_vars):
+                    col_key = _sanitize_var(user_var)
+                    if i < len(unpack_cols):
+                        # Named column from the mapping (e.g. ta.trend.macd().iloc[:, i])
+                        lines.append(f"    df['{col_key}'] = _tmp_{var_name}.iloc[:, {i}] if hasattr(_tmp_{var_name}, 'iloc') else _tmp_{var_name}")
+                    else:
+                        lines.append(f"    df['{col_key}'] = _tmp_{var_name}.iloc[:, {i}]")
+                assignment = "\n".join(lines)
+            elif mapping and mapping.output_type == "multi_column" and mapping.unpack_columns:
+                # Single var on LHS but indicator is multi-column: assign all columns
                 lines = [f"_tmp_{var_name} = {python_code}"]
                 for i, col_suffix in enumerate(mapping.unpack_columns):
                     lines.append(f"    df['{var_name}_{col_suffix}'] = _tmp_{var_name}.iloc[:, {i}]")
@@ -218,7 +230,12 @@ class CodeGenerator:
     def _build_signal_block(self, signal_type: str, condition: str, trade_id: str) -> str:
         """Build a Python if-block for signal detection."""
         if not condition or condition == "unknown":
-            return f"# {trade_id}: condition could not be parsed\n    # return \"{signal_type}\""
+            raise ValueError(f"Unparseable condition for trade_id: '{trade_id}'. Cannot generate safe trading logic.")
+            
+        try:
+            compile(condition, "<string>", "eval")
+        except SyntaxError as e:
+            raise ValueError(f"Translated condition is not valid Python syntax for trade_id '{trade_id}': {condition}") from e
 
         return (
             f"# Signal: {trade_id}\n"
@@ -236,8 +253,6 @@ class CodeGenerator:
           - Variable name resolution via symbol table
           - Built-in Pine variables → df column references
         """
-        import re
-
         if not condition:
             return ""
 
@@ -247,11 +262,15 @@ class CodeGenerator:
         crossover_pattern = r"ta\.crossover\(([^,]+),\s*([^)]+)\)"
         def _replace_crossover(m):
             a_raw, b_raw = m.group(1).strip(), m.group(2).strip()
-            a_last = self._resolve_var(a_raw, symbol_table, "last")
-            a_prev = self._resolve_var(a_raw, symbol_table, "prev")
-            b_last = self._resolve_var(b_raw, symbol_table, "last")
-            b_prev = self._resolve_var(b_raw, symbol_table, "prev")
-            return f"{a_prev} <= {b_prev} and {a_last} > {b_last}"
+            a_last = self._resolve_var(a_raw, symbol_table, -1)
+            a_prev = self._resolve_var(a_raw, symbol_table, -2)
+            b_last = self._resolve_var(b_raw, symbol_table, -1)
+            b_prev = self._resolve_var(b_raw, symbol_table, -2)
+            return (
+                f"not pd.isna({a_prev}) and not pd.isna({b_prev}) "
+                f"and not pd.isna({a_last}) and not pd.isna({b_last}) "
+                f"and {a_prev} <= {b_prev} and {a_last} > {b_last}"
+            )
 
         result = re.sub(crossover_pattern, _replace_crossover, result)
 
@@ -259,58 +278,64 @@ class CodeGenerator:
         crossunder_pattern = r"ta\.crossunder\(([^,]+),\s*([^)]+)\)"
         def _replace_crossunder(m):
             a_raw, b_raw = m.group(1).strip(), m.group(2).strip()
-            a_last = self._resolve_var(a_raw, symbol_table, "last")
-            a_prev = self._resolve_var(a_raw, symbol_table, "prev")
-            b_last = self._resolve_var(b_raw, symbol_table, "last")
-            b_prev = self._resolve_var(b_raw, symbol_table, "prev")
-            return f"{a_prev} >= {b_prev} and {a_last} < {b_last}"
+            a_last = self._resolve_var(a_raw, symbol_table, -1)
+            a_prev = self._resolve_var(a_raw, symbol_table, -2)
+            b_last = self._resolve_var(b_raw, symbol_table, -1)
+            b_prev = self._resolve_var(b_raw, symbol_table, -2)
+            return (
+                f"not pd.isna({a_prev}) and not pd.isna({b_prev}) "
+                f"and not pd.isna({a_last}) and not pd.isna({b_last}) "
+                f"and {a_prev} >= {b_prev} and {a_last} < {b_last}"
+            )
 
         result = re.sub(crossunder_pattern, _replace_crossunder, result)
 
-        # Handle remaining simple comparisons — resolve any unresolved variables
-        # Replace remaining Pine variable references
-        tokens = re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', result)
-        for token in set(tokens):
-            if token in symbol_table and token not in ("and", "or", "not", "True", "False",
-                                                        "last", "prev", "df", "None"):
-                resolved = self._resolve_var(token, symbol_table, "last")
-                # Only replace whole-word matches not already resolved
-                result = re.sub(rf'\b{re.escape(token)}\b', resolved, result)
+        # Replace remaining Pine variable references with df.iloc[] access
+        tokens = list(set(re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', result)))
+        tokens.sort(key=len, reverse=True)
+        _skip = {"and", "or", "not", "True", "False", "None", "pd", "isna", "df", "iloc"}
+        for token in tokens:
+            if token in symbol_table and token not in _skip:
+                resolved = self._resolve_var(token, symbol_table, -1)
+                result = re.sub(rf"(?<!\[')\b{re.escape(token)}\b(?!'\])", resolved, result)
 
         return result
 
-    def _resolve_var(self, name: str, symbol_table: dict[str, str], row: str = "last") -> str:
+    def _resolve_var(self, name: str, symbol_table: dict[str, str], iloc_index: int = -1) -> str:
         """
-        Resolve a Pine Script variable name to its Python row-access equivalent.
+        Resolve a Pine Script variable name to its Python df.iloc[] equivalent.
 
-        For df columns: last['col_name'] or prev['col_name']
-        For config vars: FAST_LENGTH (no row access)
-        For literals: return as-is
+        Args:
+            name: Pine Script variable name or numeric literal.
+            symbol_table: Maps Pine names to their Python representations.
+            iloc_index: Negative integer iloc position. -1 = latest bar, -2 = previous bar.
+
+        Returns:
+            Python expression string suitable for use in a boolean condition.
         """
         name = name.strip()
 
-        # Check if it's a numeric literal
+        # Numeric literal — return as-is
         try:
             float(name)
             return name
         except ValueError:
             pass
 
-        # Check symbol table
+        # Symbol table lookup
         if name in symbol_table:
             py_ref = symbol_table[name]
-            # If it's a df column reference, convert to row access
             if py_ref.startswith("df["):
-                col_name = py_ref[3:-1]  # Extract 'col_name' from df['col_name']
-                return f"{row}[{col_name}]"
-            # If it's a config variable (uppercase ENV key), return as-is
+                # df['col_name'] → df['col_name'].iloc[index]
+                return f"{py_ref}.iloc[{iloc_index}]"
+            # Config constant (uppercase ENV key) — no row access needed
             return py_ref
 
-        # Check built-in OHLCV variables
+        # Built-in OHLCV
         if name in BUILTIN_VARS:
-            return f"{row}['{name}']"
+            return f"df['{name}'].iloc[{iloc_index}]"
 
-        # Unknown — return as-is (might be a global config var)
+        # Unknown — return as-is
         return name
 
     def _build_params(self, spec: StrategySpec) -> list[dict]:

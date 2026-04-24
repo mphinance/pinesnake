@@ -231,9 +231,10 @@ INDICATOR_MAP: dict[str, IndicatorMapping] = {
     # Volume
     "ta.obv": IndicatorMapping("ta.obv", _obv, needs_ohlc=True, notes="On-Balance Volume"),
 
-    # Cross detection
-    "ta.crossover": IndicatorMapping("ta.crossover", _crossover, notes="Bullish crossover (a crosses above b)"),
-    "ta.crossunder": IndicatorMapping("ta.crossunder", _crossunder, notes="Bearish crossunder (a crosses below b)"),
+    # Cross detection — kept SEPARATE from INDICATOR_MAP.
+    # Assigning ta.crossover/crossunder to a variable is handled as a boolean
+    # Assignment by the Analyzer, not as a series indicator.
+    # They ARE still resolved in condition strings by the generator's regex pass.
 
     # Rolling aggregates
     "ta.highest": IndicatorMapping("ta.highest", _highest, notes="Rolling maximum"),
@@ -247,6 +248,10 @@ INDICATOR_MAP: dict[str, IndicatorMapping] = {
     "na": IndicatorMapping("na", _na, notes="Check for NaN/null"),
     "nz": IndicatorMapping("nz", _nz, notes="Replace NaN with value"),
 }
+# Functions that compute a boolean condition, NOT a series indicator.
+# Assignments like `bullCross = ta.crossover(a, b)` are treated as
+# boolean Assignments by the Analyzer, not as IndicatorCalls.
+CROSS_FUNCTIONS: set[str] = {"ta.crossover", "ta.crossunder"}
 
 
 # ═══════════════════════════════════════════════
@@ -281,7 +286,7 @@ def resolve_indicator(pine_func: str, args: list[str], kwargs: dict[str, str]) -
     """
     mapping = INDICATOR_MAP.get(pine_func)
     if mapping is None:
-        return None
+        raise ValueError(f"Unsupported indicator: {pine_func}")
 
     # Substitute Pine built-in variables in args
     resolved_args = [_resolve_builtins(a) for a in args]
@@ -292,12 +297,12 @@ def resolve_indicator(pine_func: str, args: list[str], kwargs: dict[str, str]) -
 
 def _resolve_builtins(expr: str) -> str:
     """Replace Pine Script built-in variable names with DataFrame column references."""
-    result = expr
-    for pine_var, py_expr in BUILTIN_VARS.items():
-        # Only replace whole-word matches
-        if result == pine_var:
-            return py_expr
-    return result
+    import re
+    def _replace(m):
+        word = m.group(0)
+        return BUILTIN_VARS.get(word, word)
+    
+    return re.sub(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', _replace, expr)
 
 
 def get_supported_functions() -> list[dict[str, str]]:

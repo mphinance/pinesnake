@@ -32,3 +32,9 @@ Thumbs.db
 GEMINI.md
 .gemini/
 .architect_prompt.md
+
+# Constellation dev artifacts (contain API keys / ephemeral outputs)
+lane_*.md
+constellation_review.py
+architect_loop.py
+CONSTELLATION_SYNTHESIS.md

@@ -13,10 +13,33 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+import time
+from functools import wraps
+
 import pandas as pd
 import requests
 
 logger = logging.getLogger(__name__)
+
+
+def with_retry(max_retries=3, initial_delay=1.0, backoff_factor=2.0):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            delay = initial_delay
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except requests.RequestException as e:
+                    if attempt == max_retries - 1:
+                        logger.error(f"Failed after {max_retries} attempts: {e}")
+                        raise
+                    logger.warning(f"API error: {e}. Retrying in {delay}s ({attempt+1}/{max_retries})")
+                    time.sleep(delay)
+                    delay *= backoff_factor
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
 
 
 @dataclass
@@ -57,6 +80,7 @@ class TradierClient:
         self.session = requests.Session()
         self.session.headers.update(config.headers)
 
+    @with_retry(max_retries=3, initial_delay=1.0)
     def fetch_bars(
         self,
         symbol: str,
@@ -79,7 +103,7 @@ class TradierClient:
         # Map user-friendly intervals to Tradier API values
         interval_map = {
             "1min": "1min", "5min": "5min", "15min": "15min",
-            "1h": "60min", "4h": "daily", "1d": "daily",
+            "1h": "60min", "4h": "240min", "1d": "daily",
             "daily": "daily", "weekly": "weekly", "monthly": "monthly",
         }
         tradier_interval = interval_map.get(interval, interval)

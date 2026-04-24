@@ -54,6 +54,7 @@ class Direction(Enum):
     """Trade direction."""
     LONG = "long"
     SHORT = "short"
+    ALL = "all"
 
 
 class StrategyAction(Enum):
@@ -84,8 +85,16 @@ class IndicatorCall:
     pine_func: str
     args: list[str]
     kwargs: dict[str, Any]
-    result_var: str = ""
+    result_var: str = ""              # Single-variable assignment
+    result_vars: list[str] = field(default_factory=list)  # Tuple-unpack assignment
     pandas_ta_func: str = ""
+
+    @property
+    def primary_var(self) -> str:
+        """The primary result variable name (first in tuple or sole var)."""
+        if self.result_vars:
+            return self.result_vars[0]
+        return self.result_var
 
 
 @dataclass
@@ -229,7 +238,22 @@ class Analyzer:
                 return
 
             if func_name and func_name.startswith("ta."):
-                self._extract_indicator(name, func_name, value)
+                # ta.crossover / ta.crossunder assigned to a variable are boolean
+                # conditions, NOT series indicators. Store them as Assignments so
+                # the generator can inline them correctly when referenced in conditions.
+                if func_name in ("ta.crossover", "ta.crossunder"):
+                    expr_str = self._node_to_string(value)
+                    self.spec.assignments.append(Assignment(
+                        name=name,
+                        expression=expr_str,
+                        is_series=False,
+                    ))
+                    return
+
+                # Detect tuple unpacking: "[macd, signal, hist] = ta.macd(...)"
+                # _get_id returns comma-separated names for Tuple targets
+                result_vars = [v.strip() for v in name.split(",") if v.strip()] if "," in name else []
+                self._extract_indicator(name, func_name, value, result_vars=result_vars)
                 return
 
         # Generic assignment
@@ -244,11 +268,13 @@ class Analyzer:
         """Handle AugAssign (+=, -=, etc.)."""
         target = getattr(stmt, "target", None)
         value = getattr(stmt, "value", None)
+        op = getattr(stmt, "op", None)
         name = self._get_id(target) if target else None
-        if name and value:
+        if name and value and op:
+            op_str = self._op_to_string(op)
             self.spec.assignments.append(Assignment(
                 name=name,
-                expression=self._node_to_string(value),
+                expression=f"{name} {op_str} {self._node_to_string(value)}",
             ))
 
     def _handle_if(self, stmt: Any) -> None:
@@ -350,18 +376,24 @@ class Analyzer:
             default_value=default,
         ))
 
-    def _extract_indicator(self, result_var: str, func_name: str, call_node: Any) -> None:
+    def _extract_indicator(
+        self, result_var: str, func_name: str, call_node: Any, result_vars: list[str] | None = None
+    ) -> None:
         """Extract a ta.* indicator call."""
         pos_args, kw_args = self._split_args(call_node)
 
         args_str = [self._node_to_string(a) for a in pos_args]
         kwargs_str = {k: self._node_to_string(v) for k, v in kw_args.items()}
 
+        # For tuple assignments, result_var is the first variable
+        primary = result_vars[0] if result_vars else result_var
+
         self.spec.indicators.append(IndicatorCall(
             pine_func=func_name,
             args=args_str,
             kwargs=kwargs_str,
-            result_var=result_var,
+            result_var=primary,
+            result_vars=result_vars or [],
         ))
 
     def _extract_strategy_call(self, func_name: str, call_node: Any) -> None:
@@ -381,7 +413,7 @@ class Analyzer:
 
         call = StrategyCall(
             action=action,
-            condition=self._current_condition or "",
+            condition=self._current_condition or "True",
         )
 
         # First positional arg is trade ID
@@ -405,6 +437,10 @@ class Analyzer:
                 call.direction = Direction.LONG
             elif "short" in dir_str.lower():
                 call.direction = Direction.SHORT
+            elif "all" in dir_str.lower():
+                call.direction = Direction.ALL
+        elif action in (StrategyAction.CLOSE, StrategyAction.EXIT, StrategyAction.CANCEL_ALL):
+            call.direction = Direction.ALL
 
         # Stop/limit/qty
         if "stop" in kw_args:
@@ -432,11 +468,16 @@ class Analyzer:
         node_type = type(node).__name__
         if node_type == "Name":
             return getattr(node, "id", None)
-        # Tuple unpacking — return first element for now
+        # Tuple unpacking — return comma separated list of names
         if node_type == "Tuple":
             elts = getattr(node, "elts", [])
-            if elts:
-                return self._get_id(elts[0])
+            parts = []
+            for e in elts:
+                val = self._get_id(e)
+                if val:
+                    parts.append(val)
+            if parts:
+                return ", ".join(parts)
         return None
 
     def _get_value(self, node: Any) -> Any:
@@ -554,7 +595,7 @@ class Analyzer:
         if node_type == "Tuple":
             elts = getattr(node, "elts", [])
             parts = [self._node_to_string(e) for e in elts]
-            return f"[{', '.join(parts)}]"
+            return f"({', '.join(parts)})"
 
         if node_type == "Arg":
             return self._node_to_string(getattr(node, "value", None))
