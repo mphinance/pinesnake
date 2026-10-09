@@ -79,7 +79,8 @@ class CodeGenerator:
         # Render template
         template = self.jinja_env.get_template("tradier_algo.py.j2")
         code = template.render(
-            strategy_name=spec.name,
+            strategy_name=_display_name(spec.name),
+            strategy_slug=_slug(spec.name),
             source_file=spec.source_file or "unknown.pine",
             generated_date=datetime.now().strftime("%Y-%m-%d %H:%M"),
             default_symbol=self.symbol,
@@ -105,7 +106,7 @@ class CodeGenerator:
         params = self._build_params(spec)
         template = self.jinja_env.get_template("config.env.j2")
         return template.render(
-            strategy_name=spec.name,
+            strategy_name=_display_name(spec.name),
             generated_date=datetime.now().strftime("%Y-%m-%d %H:%M"),
             default_symbol=self.symbol,
             timeframe=self.timeframe,
@@ -151,11 +152,7 @@ class CodeGenerator:
                 lines = [f"_tmp_{var_name} = {python_code}"]
                 for i, user_var in enumerate(ind.result_vars):
                     col_key = _sanitize_var(user_var)
-                    if i < len(unpack_cols):
-                        # Named column from the mapping (e.g. ta.trend.macd().iloc[:, i])
-                        lines.append(f"    df['{col_key}'] = _tmp_{var_name}.iloc[:, {i}] if hasattr(_tmp_{var_name}, 'iloc') else _tmp_{var_name}")
-                    else:
-                        lines.append(f"    df['{col_key}'] = _tmp_{var_name}.iloc[:, {i}]")
+                    lines.append(f"    df['{col_key}'] = _tmp_{var_name}.iloc[:, {i}]")
                 assignment = "\n".join(lines)
             elif mapping and mapping.output_type == "multi_column" and mapping.unpack_columns:
                 # Single var on LHS but indicator is multi-column: assign all columns
@@ -222,8 +219,10 @@ class CodeGenerator:
 
         # Indicator result variables → df column references
         for ind in spec.indicators:
-            col_name = _sanitize_var(ind.result_var)
-            table[ind.result_var] = f"df['{col_name}']"
+            # Tuple unpack ([a, b, c] = ta.macd(...)) declares several variables;
+            # every one of them needs an entry, not just the first.
+            for var in ind.result_vars or [ind.result_var]:
+                table[var] = f"df['{_sanitize_var(var)}']"
 
         return table
 
@@ -367,6 +366,16 @@ class CodeGenerator:
             })
 
         return params
+
+
+def _display_name(name: str) -> str:
+    """Strategy name made safe to embed in the generated file's docstrings and f-strings."""
+    return re.sub(r'["\\{}]', "'", name).replace("\n", " ").strip()
+
+
+def _slug(name: str) -> str:
+    """Filesystem- and logger-safe identifier derived from the strategy name."""
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "strategy"
 
 
 def _sanitize_var(name: str) -> str:

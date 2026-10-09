@@ -63,31 +63,15 @@ def _macd(args: list[str], kwargs: dict[str, str]) -> str:
     fast = args[1] if len(args) > 1 else kwargs.get("fast", "12")
     slow = args[2] if len(args) > 2 else kwargs.get("slow", "26")
     signal = args[3] if len(args) > 3 else kwargs.get("signal", "9")
-    # Returns individual components — handled by unpack logic
-    return f"ta.trend.macd({src}, window_slow={slow}, window_fast={fast}, window_sign={signal})"
-
-
-def _macd_line(args: list[str], kwargs: dict[str, str]) -> str:
-    src = args[0] if args else kwargs.get("source", "df['close']")
-    fast = args[1] if len(args) > 1 else kwargs.get("fast", "12")
-    slow = args[2] if len(args) > 2 else kwargs.get("slow", "26")
-    return f"ta.trend.macd({src}, window_slow={slow}, window_fast={fast})"
-
-
-def _macd_signal(args: list[str], kwargs: dict[str, str]) -> str:
-    src = args[0] if args else kwargs.get("source", "df['close']")
-    fast = args[1] if len(args) > 1 else kwargs.get("fast", "12")
-    slow = args[2] if len(args) > 2 else kwargs.get("slow", "26")
-    signal = args[3] if len(args) > 3 else kwargs.get("signal", "9")
-    return f"ta.trend.macd_signal({src}, window_slow={slow}, window_fast={fast}, window_sign={signal})"
-
-
-def _macd_hist(args: list[str], kwargs: dict[str, str]) -> str:
-    src = args[0] if args else kwargs.get("source", "df['close']")
-    fast = args[1] if len(args) > 1 else kwargs.get("fast", "12")
-    slow = args[2] if len(args) > 2 else kwargs.get("slow", "26")
-    signal = args[3] if len(args) > 3 else kwargs.get("signal", "9")
-    return f"ta.trend.macd_diff({src}, window_slow={slow}, window_fast={fast}, window_sign={signal})"
+    # ta.trend.macd() takes no signal window and returns one Series, so build the
+    # Pine-shaped [macd, signal, hist] triple explicitly.
+    return (
+        "pd.DataFrame({"
+        f"'macd': ta.trend.macd({src}, window_slow={slow}, window_fast={fast}), "
+        f"'signal': ta.trend.macd_signal({src}, window_slow={slow}, window_fast={fast}, window_sign={signal}), "
+        f"'hist': ta.trend.macd_diff({src}, window_slow={slow}, window_fast={fast}, window_sign={signal})"
+        "})"
+    )
 
 
 def _atr(args: list[str], kwargs: dict[str, str]) -> str:
@@ -97,13 +81,13 @@ def _atr(args: list[str], kwargs: dict[str, str]) -> str:
 
 def _stoch(args: list[str], kwargs: dict[str, str]) -> str:
     k = args[3] if len(args) > 3 else kwargs.get("length", kwargs.get("k", "14"))
-    return f"ta.momentum.stoch(df['high'], df['low'], df['close'], window={k})"
+    return f"ta.momentum.stoch(df['high'], df['low'], df['close'], window={k}, smooth_window=1)"
 
 
 def _vwma(args: list[str], kwargs: dict[str, str]) -> str:
     src = args[0] if args else kwargs.get("source", "df['close']")
     length = args[1] if len(args) > 1 else kwargs.get("length", "14")
-    return f"ta.volume.volume_weighted_average_price(df['high'], df['low'], {src}, df['volume'], window={length})"
+    return f"(({src} * df['volume']).rolling({length}).sum() / df['volume'].rolling({length}).sum())"
 
 
 def _crossover(args: list[str], kwargs: dict[str, str]) -> str:
@@ -158,30 +142,29 @@ def _wma(args: list[str], kwargs: dict[str, str]) -> str:
 
 
 def _hma(args: list[str], kwargs: dict[str, str]) -> str:
-    # ta library doesn't have HMA directly — approximate with WMA composition
+    # Hull MA = WMA(2*WMA(src, n/2) - WMA(src, n), sqrt(n))
     src = args[0] if args else kwargs.get("source", "df['close']")
     length = args[1] if len(args) > 1 else kwargs.get("length", "14")
-    return f"ta.trend.wma_indicator({src}, window={length})  # HMA approximation"
+    half = f"max(int({length}) // 2, 1)"
+    root = f"max(int(round(int({length}) ** 0.5)), 1)"
+    return (
+        f"ta.trend.wma_indicator(2 * ta.trend.wma_indicator({src}, window={half}) "
+        f"- ta.trend.wma_indicator({src}, window=int({length})), window={root})"
+    )
 
 
-def _bb_upper(args: list[str], kwargs: dict[str, str]) -> str:
+def _bb(args: list[str], kwargs: dict[str, str]) -> str:
+    # Pine: [middle, upper, lower] = ta.bb(src, length, mult)
     src = args[0] if args else kwargs.get("source", "df['close']")
     length = args[1] if len(args) > 1 else kwargs.get("length", "20")
     std = args[2] if len(args) > 2 else kwargs.get("mult", kwargs.get("std", "2"))
-    return f"ta.volatility.bollinger_hband({src}, window={length}, window_dev={std})"
-
-
-def _bb_mid(args: list[str], kwargs: dict[str, str]) -> str:
-    src = args[0] if args else kwargs.get("source", "df['close']")
-    length = args[1] if len(args) > 1 else kwargs.get("length", "20")
-    return f"ta.volatility.bollinger_mavg({src}, window={length})"
-
-
-def _bb_lower(args: list[str], kwargs: dict[str, str]) -> str:
-    src = args[0] if args else kwargs.get("source", "df['close']")
-    length = args[1] if len(args) > 1 else kwargs.get("length", "20")
-    std = args[2] if len(args) > 2 else kwargs.get("mult", kwargs.get("std", "2"))
-    return f"ta.volatility.bollinger_lband({src}, window={length}, window_dev={std})"
+    return (
+        "pd.DataFrame({"
+        f"'basis': ta.volatility.bollinger_mavg({src}, window={length}), "
+        f"'upper': ta.volatility.bollinger_hband({src}, window={length}, window_dev={std}), "
+        f"'lower': ta.volatility.bollinger_lband({src}, window={length}, window_dev={std})"
+        "})"
+    )
 
 
 def _cci(args: list[str], kwargs: dict[str, str]) -> str:
@@ -212,8 +195,8 @@ INDICATOR_MAP: dict[str, IndicatorMapping] = {
     "ta.sma": IndicatorMapping("ta.sma", _sma, notes="Simple Moving Average"),
     "ta.ema": IndicatorMapping("ta.ema", _ema, notes="Exponential Moving Average"),
     "ta.wma": IndicatorMapping("ta.wma", _wma, notes="Weighted Moving Average"),
-    "ta.hma": IndicatorMapping("ta.hma", _hma, notes="Hull Moving Average (WMA approx)"),
-    "ta.vwma": IndicatorMapping("ta.vwma", _vwma, notes="Volume Weighted Average Price"),
+    "ta.hma": IndicatorMapping("ta.hma", _hma, notes="Hull Moving Average"),
+    "ta.vwma": IndicatorMapping("ta.vwma", _vwma, notes="Volume Weighted Moving Average"),
 
     # Oscillators
     "ta.rsi": IndicatorMapping("ta.rsi", _rsi, notes="Relative Strength Index"),
@@ -225,8 +208,8 @@ INDICATOR_MAP: dict[str, IndicatorMapping] = {
 
     # Volatility
     "ta.atr": IndicatorMapping("ta.atr", _atr, needs_ohlc=True, notes="Average True Range"),
-    "ta.bb": IndicatorMapping("ta.bb", _bb_upper, notes="Bollinger Bands upper"),
-    "ta.bbands": IndicatorMapping("ta.bbands", _bb_upper, notes="Bollinger Bands alias"),
+    "ta.bb": IndicatorMapping("ta.bb", _bb, notes="Bollinger Bands (basis, upper, lower)", output_type="multi_column", unpack_columns=["basis", "upper", "lower"]),
+    "ta.bbands": IndicatorMapping("ta.bbands", _bb, notes="Bollinger Bands alias", output_type="multi_column", unpack_columns=["basis", "upper", "lower"]),
 
     # Volume
     "ta.obv": IndicatorMapping("ta.obv", _obv, needs_ohlc=True, notes="On-Balance Volume"),

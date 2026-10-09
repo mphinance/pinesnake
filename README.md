@@ -18,7 +18,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-0.1.0-00d4aa?style=flat-square" alt="Version"/>
-  <img src="https://img.shields.io/badge/tests-40%20passed-00d4aa?style=flat-square" alt="Tests"/>
+  <img src="https://img.shields.io/badge/tests-71%20passed-00d4aa?style=flat-square" alt="Tests"/>
   <img src="https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square" alt="Python"/>
   <img src="https://img.shields.io/badge/broker-Tradier-blue?style=flat-square" alt="Broker"/>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"/>
@@ -33,6 +33,32 @@ PineSnake is a transpiler that reads your TradingView Pine Script v5 strategies 
 You write strategies in Pine Script on TradingView. PineSnake handles everything else: parsing the AST, resolving indicator calls to the [`ta`](https://github.com/bukosabino/ta) library, generating signal logic, and producing a fully standalone `.py` file with built-in retry logic, DRY_RUN safety, and environment-based configuration.
 
 **No copy-pasting indicator math. No rewriting strategy logic. Just transpile and trade.**
+
+
+## How It Works
+
+1. **Write or grab** a Pine Script v5 strategy.
+2. **`pinesnake validate`** shows what PineSnake detected (inputs, indicators, entries/exits) before anything is generated.
+3. **`pinesnake convert`** emits one standalone `.py` bot plus a `.env` template.
+4. **Run it** in `DRY_RUN` against the Tradier sandbox, read the logs, then decide whether to go live.
+
+There is no webhook, no TradingView alert, and no third-party service in the loop. The generated file talks to your broker directly and has zero dependency on PineSnake.
+
+## Why Not a Webhook Relay?
+
+The usual way to automate a TradingView strategy is to fire alerts at a hosted relay that forwards them to your broker. That works, but it needs a TradingView plan with webhooks, a third-party service in the path, and usually a subscription.
+
+PineSnake takes the other route: the strategy becomes plain Python you own. No alerts, no middleman, no recurring fee, and you can read every line before it touches your account. The tradeoff is real: you run the process yourself, and Pine coverage is a subset (see below). If you want zero ops and many brokers, a relay is the easier path; if you want free, auditable and self-hosted, this is it.
+
+## Limitations (Read Before Installing)
+
+- **Pine Script v5 is the target.** A basic `//@version=6` script parses, but v6 is not systematically tested. If something misbehaves, try `//@version=5`.
+- **Strategies only.** Indicators-only scripts have no `strategy.*` calls to turn into orders.
+- **Supported subset.** 19 `ta.*` functions plus `na`/`nz`; see [Supported Functions](#supported-functions). Anything else fails at generation time with an `Unsupported indicator` error. It does not silently skip.
+- **Bar-polling bot, not tick-by-tick.** Not suitable for sub-minute or high-frequency strategies.
+- **Brokers:** Tradier only. See the `strategy.*` table in [docs/supported_functions.md](docs/supported_functions.md) for what maps to what.
+- **You run it.** Process supervision, restarts, and monitoring are on you. Not set-and-forget.
+- **No backtester yet** (roadmap v0.3.0). Backtest in TradingView first; PineSnake does not guarantee its output matches TradingView's fills, because bar timing, slippage and indicator seeding differ.
 
 ---
 
@@ -119,7 +145,7 @@ pinesnake convert <file.pine> [OPTIONS]
 | `--symbol` | Default ticker symbol | `SPY` |
 | `--timeframe` | Bar interval (`1min`, `5min`, `15min`, `1h`, `4h`, `1d`) | `5min` |
 | `--output` / `-o` | Output file path | `<strategy_name>_algo.py` |
-| `--env-output` | Output `.env` file path | `<strategy_name>.env` |
+| `--env` / `--no-env` | Also generate the `.env` config file (written next to the bot) | `--env` |
 
 **Examples:**
 
@@ -127,16 +153,16 @@ pinesnake convert <file.pine> [OPTIONS]
 # RSI strategy on QQQ, 15-minute bars
 pinesnake convert strategies/rsi.pine --tradier --symbol QQQ --timeframe 15min
 
-# MACD strategy with custom output paths
-pinesnake convert macd.pine --tradier -o bots/macd_bot.py --env-output bots/macd.env
+# MACD strategy with a custom output path, no .env file
+pinesnake convert macd.pine --tradier -o bots/macd_bot.py --no-env
 ```
 
-### `pinesnake analyze`
+### `pinesnake validate`
 
-Dry-run analysis. Shows what PineSnake detected without generating code.
+Parse and analyze only. Shows what PineSnake detected without generating code.
 
 ```bash
-pinesnake analyze examples/rsi_strategy.pine
+pinesnake validate examples/rsi_strategy.pine
 ```
 
 Output:
@@ -171,12 +197,12 @@ pinesnake supported
 - `ta.sma` - Simple Moving Average
 - `ta.ema` - Exponential Moving Average
 - `ta.wma` - Weighted Moving Average
-- `ta.hma` - Hull Moving Average (WMA approximation)
-- `ta.vwma` - Volume Weighted Average Price
+- `ta.hma` - Hull Moving Average
+- `ta.vwma` - Volume Weighted Moving Average
 
 ### Oscillators
 - `ta.rsi` - Relative Strength Index
-- `ta.macd` - MACD (returns 3 components: line, signal, histogram)
+- `ta.macd` - MACD (`[macd, signal, hist]`)
 - `ta.stoch` - Stochastic Oscillator
 - `ta.cci` - Commodity Channel Index
 - `ta.mfi` - Money Flow Index
@@ -184,7 +210,7 @@ pinesnake supported
 
 ### Volatility
 - `ta.atr` - Average True Range
-- `ta.bb` / `ta.bbands` - Bollinger Bands
+- `ta.bb` / `ta.bbands` - Bollinger Bands (`[basis, upper, lower]`, Pine order)
 
 ### Volume
 - `ta.obv` - On-Balance Volume
@@ -234,6 +260,29 @@ The code generator validates every translated condition with `compile()` before 
 ### Sandbox by Default
 
 When `DRY_RUN=true`, the generated bot targets `sandbox.tradier.com` instead of the production API. Even if order logic accidentally fires, no real orders reach the market.
+
+---
+
+## Troubleshooting
+
+Keyed by the literal message you will see.
+
+| Message | Cause | Fix |
+|---|---|---|
+| `Unsupported indicator: ta.xyz` | Function not in `INDICATOR_MAP` | Run `pinesnake supported`; add a mapping per [CLAUDE.md](CLAUDE.md) or rewrite the strategy |
+| `Unparseable condition for trade_id: '...'` | The `if` condition could not be translated | Simplify the condition; split compound logic into named variables |
+| `Translated condition is not valid Python syntax for trade_id '...'` | Translation produced invalid Python | Same as above; file an issue with the `.pine` snippet |
+| `Parse error: ...` / `Empty source code` | Not valid Pine v5, or empty file | Confirm `//@version=5`; run `pinesnake validate` |
+| `Pine Script file not found` | Wrong path | Check the path |
+| Bot logs signals but no orders reach the broker | `DRY_RUN=true` (default) | Set `DRY_RUN=false` in `.env` only after a sandbox run |
+| Orders hit the Tradier sandbox, not your real account | `DRY_RUN=true` points the bot at `sandbox.tradier.com` | Expected behavior |
+| No signals ever fire | Not enough bars for indicator warmup (NaN guards block trades) | Lower lengths or use a longer history window |
+
+---
+
+## Risk Warning
+
+This software generates code that can place real orders with real money. It is provided as-is under the MIT license with no warranty. Generated bots are only as correct as the translation and your strategy. Run in `DRY_RUN`, review the generated file, and size positions you can afford to lose. Nothing here is financial advice.
 
 ---
 
@@ -287,7 +336,7 @@ pinesnake/
   __init__.py           # Package version
   parser.py             # Pine Script -> AST (via pynescript)
   analyzer.py           # AST -> StrategySpec (inputs, indicators, signals)
-  cli.py                # Click CLI (convert, analyze, supported)
+  cli.py                # Click CLI (convert, validate, supported)
   brokers/
     tradier.py          # Tradier API client (with retry logic)
   codegen/
@@ -301,10 +350,13 @@ examples/
   ema_crossover.pine    # EMA crossover strategy
   rsi_strategy.pine     # RSI overbought/oversold strategy
   macd_strategy.pine    # MACD crossover strategy
+  bollinger_strategy.pine  # Bollinger band mean-reversion strategy
 tests/
   test_parser.py        # Parser unit tests
   test_analyzer.py      # Analyzer unit tests
   test_codegen.py       # Code generation + indicator resolution tests
+  test_runtime.py       # Executes every emitted indicator expression on real data
+  test_e2e.py           # Generates each example bot, imports it, runs its signals
 ```
 
 ---
@@ -331,7 +383,7 @@ streamlit run app.py
 - `pynescript` - Pine Script parser
 - `jinja2` - Template engine
 - `pandas` - Data handling
-- `ta` - Technical analysis indicators
+- `ta` - Technical analysis indicators (also required by the generated bots)
 - `requests` - HTTP client
 - `python-dotenv` - Environment config
 - `click` - CLI framework

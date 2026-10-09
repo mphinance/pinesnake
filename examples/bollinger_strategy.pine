@@ -1,0 +1,16 @@
+//@version=5
+strategy("Bollinger Mean Reversion", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// Inputs
+bbLength = input.int(20, "BB Length")
+bbMult = input.float(2.0, "BB Multiplier")
+
+// Indicator: Pine returns [middle, upper, lower]
+[basis, upper, lower] = ta.bb(close, bbLength, bbMult)
+
+// Buy a close back above the lower band, exit at the basis
+if ta.crossover(close, lower)
+    strategy.entry("BB Long", strategy.long)
+
+if ta.crossover(close, basis)
+    strategy.close("BB Long")
