@@ -28,10 +28,10 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("{{ strategy_name | replace(' ', '_') | lower }}.log"),
+        logging.FileHandler("{{ strategy_slug }}.log"),
     ],
 )
-logger = logging.getLogger("{{ strategy_name | replace(' ', '_') | lower }}")
+logger = logging.getLogger("{{ strategy_slug }}")
 
 # ═══════════════════════════════════════════════════════
 # CONFIGURATION (from Pine Script inputs)

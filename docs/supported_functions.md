@@ -1,40 +1,42 @@
 # PineSnake Supported Functions
 
-> Auto-generated reference for Pine Script functions supported by PineSnake v0.1.0
+Python column shows the call emitted into the generated bot, using the [`ta`](https://github.com/bukosabino/ta) library (not pandas-ta). 19 `ta.*` functions plus `na`/`nz`; `ta.bb` and `ta.bbands` are aliases. Every mapping is executed against real data in `tests/test_runtime.py`.
+
+> Reference for Pine Script functions supported by PineSnake v0.1.0
 
 ## Moving Averages
 
-| Pine Script | Python (pandas-ta) | Notes |
+| Pine Script | Python (`ta` library) | Notes |
 |------------|-------------------|-------|
-| `ta.sma(src, len)` | `ta.sma(src, length=len)` | Simple Moving Average |
-| `ta.ema(src, len)` | `ta.ema(src, length=len)` | Exponential Moving Average |
-| `ta.wma(src, len)` | `ta.wma(src, length=len)` | Weighted Moving Average |
-| `ta.hma(src, len)` | `ta.hma(src, length=len)` | Hull Moving Average |
-| `ta.vwma(src, len)` | `ta.vwma(src, volume, length=len)` | Volume Weighted Moving Average |
+| `ta.sma(src, len)` | `ta.trend.sma_indicator(src, window=len)` | Simple Moving Average |
+| `ta.ema(src, len)` | `ta.trend.ema_indicator(src, window=len)` | Exponential Moving Average |
+| `ta.wma(src, len)` | `ta.trend.wma_indicator(src, window=len)` | Weighted Moving Average |
+| `ta.hma(src, len)` | `ta.trend.wma_indicator(src, window=len)` | Hull Moving Average: `WMA(2*WMA(n/2) - WMA(n), sqrt(n))` |
+| `ta.vwma(src, len)` | `(src*volume).rolling(len).sum() / volume.rolling(len).sum()` | Volume Weighted Moving Average |
 
 ## Oscillators
 
-| Pine Script | Python (pandas-ta) | Notes |
+| Pine Script | Python (`ta` library) | Notes |
 |------------|-------------------|-------|
-| `ta.rsi(src, len)` | `ta.rsi(src, length=len)` | Relative Strength Index |
-| `ta.macd(src, fast, slow, sig)` | `ta.macd(src, fast=fast, slow=slow, signal=sig)` | Returns DataFrame with 3 columns |
-| `ta.stoch(close, high, low, len)` | `ta.stoch(high, low, close, k=len)` | Stochastic Oscillator (needs OHLC) |
-| `ta.cci(len)` | `ta.cci(high, low, close, length=len)` | Commodity Channel Index (needs OHLC) |
-| `ta.mfi(len)` | `ta.mfi(high, low, close, volume, length=len)` | Money Flow Index (needs OHLC) |
-| `ta.adx(len)` | `ta.adx(high, low, close, length=len)` | Average Directional Index (needs OHLC) |
+| `ta.rsi(src, len)` | `ta.momentum.rsi(src, window=len)` | Relative Strength Index |
+| `ta.macd(src, fast, slow, sig)` | `ta.trend.macd` / `macd_signal` / `macd_diff` packed into a DataFrame (`macd`, `signal`, `hist`) | Returns DataFrame with 3 columns |
+| `ta.stoch(close, high, low, len)` | `ta.momentum.stoch(high, low, close, window=len, smooth_window=1)` | Raw %K, unsmoothed, as in Pine (needs OHLC) |
+| `ta.cci(len)` | `ta.trend.cci(high, low, close, window=len)` | Commodity Channel Index (needs OHLC) |
+| `ta.mfi(len)` | `ta.volume.money_flow_index(high, low, close, volume, window=len)` | Money Flow Index (needs OHLC) |
+| `ta.adx(len)` | `ta.trend.adx(high, low, close, window=len)` | Average Directional Index (needs OHLC) |
 
 ## Volatility
 
-| Pine Script | Python (pandas-ta) | Notes |
+| Pine Script | Python (`ta` library) | Notes |
 |------------|-------------------|-------|
-| `ta.atr(len)` | `ta.atr(high, low, close, length=len)` | Average True Range (needs OHLC) |
-| `ta.bb(src, len, mult)` | `ta.bbands(src, length=len, std=mult)` | Bollinger Bands (returns DataFrame) |
+| `ta.atr(len)` | `ta.volatility.average_true_range(high, low, close, window=len)` | Average True Range (needs OHLC) |
+| `ta.bb(src, len, mult)` / `ta.bbands` | `ta.volatility.bollinger_mavg` / `_hband` / `_lband` packed into a DataFrame (`basis`, `upper`, `lower`) | Same order as Pine's `[middle, upper, lower]` |
 
 ## Volume
 
-| Pine Script | Python (pandas-ta) | Notes |
+| Pine Script | Python (`ta` library) | Notes |
 |------------|-------------------|-------|
-| `ta.obv(close, volume)` | `ta.obv(close, volume)` | On-Balance Volume |
+| `ta.obv(close, volume)` | `ta.volume.on_balance_volume(close, volume)` | On-Balance Volume |
 
 ## Cross Detection
 
